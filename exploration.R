@@ -19,12 +19,12 @@ registerDoParallel(cl)
 
 ############################
 # Load Data
-mobile.data <- readOGR(dsn = "work/data/2012/Data/3G")
+mobile.data <- readOGR(dsn = "data/2009/Data/3G")
 mobile.data <- spTransform(mobile.data, CRS(proj4string(mobile.data)))
 mobile.data <- gBuffer(mobile.data, width = 0)
 gIsValid(mobile.data)
 
-econ.data <- readOGR(dsn = "work/MESO/meso_2010_econ_dd")
+econ.data <- readOGR(dsn = "MESO/meso_2010_econ_dd")
 econ.data <- spTransform(econ.data, CRS(proj4string(mobile.data)))
 gIsValid(econ.data)
 
@@ -37,12 +37,10 @@ bind.null <- function (a,b) {
 }
 
 # MUTATES base!!
-calc.coverage <- function (base, mobile, id = 'MESO_ID') {
-  inter <- make.intersection(base, mobile, 4)
-  
+calc.coverage <- function (base, inter, id = 'MESO_ID') {
   areas <- data.frame(covered_area= sapply(inter@polygons, function (p) p@area))
   inter$covered_area <- areas
-  
+
   # Let's hope the order stayed the same...
   base[!base@data[, id] %in% inter@data[, id], 'covered_area'] <- 0
   base[base@data[,id] %in% inter@data[, id], 'covered_area'] <- inter$covered_area
@@ -53,7 +51,7 @@ calc.coverage <- function (base, mobile, id = 'MESO_ID') {
 make.intersection <- function (base, mobile, chunks = detectCores()) {
   N <- nrow(base)
   n <- ceiling(N/chunks)
-  
+
   foreach(i = seq(1,N,n), .combine = bind.null) %dopar% {
     chunk <- base[i:min(i + n-1, N), ]
     raster::intersect(chunk, mobile)
@@ -82,9 +80,30 @@ make.econ.sets <- function (dates) {
         mobile.data <- readOGR(dsn = file, layer = layer)
         mobile.data <- spTransform(mobile.data, CRS(proj4string(mobile.data)))
         mobile.data <- gBuffer(mobile.data, width = 0)
-        covered <- calc.coverage(econ.data, mobile.data)
+        covered <- calc.coverage(make.intersection(base, mobile))
         write.csv(covered, paste0(d, '-covered.csv'))
     }
 }
 
+get.intersected.area <- function (base, mobile, id = 'MESO_ID') {
+    inter <- raster::intersect(base, mobile)
+
+    areas <- data.frame(covered_area= sapply(inter@polygons, function (p) p@area))
+    inter$covered_area <- areas
+
+                                        # Let's hope the order stayed the same...
+    base[!base@data[, id] %in% inter@data[, id], 'covered_area'] <- 0
+    base[base@data[,id] %in% inter@data[, id], 'covered_area'] <- inter$covered_area
+    base$covered_percentage <- base$covered_area/base$AREA
+    base
+}
+
+
 dates <- c('2009', '2011', '2012', '2013', '2014', '2015')
+
+
+check.conversion <- function (old.df, new.df){
+    d <- data.frame(layer = new.df$layer, area = area(new.df))
+    d <- d[order(d$layer), ]
+    sum((d$area - area(old.df))^2)
+}

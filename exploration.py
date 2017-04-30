@@ -1,6 +1,11 @@
-# folium?? Nice to bring in open street maps via http api
-
-# import folium
+import geopandas as gpd
+import pandas as pd
+import statsmodels
+import seaborn as sns
+import numpy as np
+import os
+import folium
+import matplotlib.pyplot as plt
 
 
 # folium.GeoJson(open('../MESO/geojson/meso_2010_econ_dd.geojson'),
@@ -8,17 +13,6 @@
 #               ).add_to(map_osm)
 
 # map_osm.save('osm.html')
-
-
-
-
-
-import geopandas as gpd
-import pandas as pd
-import statsmodels
-import seaborn as sns
-import numpy as np
-import folium
 
 mobile_df = gpd.GeoDataFrame.from_file('../data/2009/Data/3G')
 mobile_df['geometry'] = mobile_df.buffer(0)

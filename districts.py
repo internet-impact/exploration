@@ -3,7 +3,15 @@ import pandas as pd
 import numpy as np
 import os
 from shapely.ops import unary_union, cascaded_union
+import multiprocessing
+from multiprocessing import Pool
 import re
+
+def mc_map(fn, dat):
+    pool = Pool(multiprocessing.cpu_count() - 1)
+    ans = pool.map(fn, dat)
+    pool.close()
+    return ans
 
 def get_poly(gdf, i):
     return gdf.geometry.iloc[i]
@@ -24,19 +32,22 @@ def has_prev(df, i):
 def lowercase_cols(df):
     return df.rename(columns = lambda s: s.lower())
 
-def get_intersections(df, poly, thresh = 0.1):
-    buffit = lambda p: p.buffer(0)
+def intersecter(df, poly, thresh, i = -1):
+    buffit = lambda p: p.buffer(i)
+    if i >= 0:
+        df.geometry = df.geometry.map(buffit)
+        poly = buffit(poly)
     try:
         inters = df[df.intersects(poly)]
         print inters.shape[0]
         intersections = inters.intersection(poly)
+        return inters, intersections
     except:
-        print '**'
-        df.geometry = df.geometry.map(buffit)
-        poly = buffit(poly)
-        inters = df[df.intersects(poly)]
-        print inters.shape[0]
-        intersections = inters.intersection(poly)
+        print '** ' + str(i)
+        return intersecter(df, poly, thresh, i+1)
+
+def get_intersections(df, poly, thresh = 0.1):
+    inters, intersections = intersecter(df, poly, thresh)
 
     # We check that the intersection is not too far from one or
     # the other, otherwise it's probably a mistake in recording.
@@ -59,14 +70,13 @@ def formatted_df(before, after, years = ['2006', '2011', '2016']):
     before, after = reformat(before, years), reformat(after, years)
     return gpd.GeoDataFrame(pd.concat([before, after]))
 
-def get_union(series):
+def get_union(series, i = -1):
     try:
-        return cascaded_union(series)
-    except ValueError:
-        print '*'
-        s = series.map(lambda p: p.buffer(0))
+        s = series.map(lambda p: p.buffer(i)) if i >= 0 else series
         return cascaded_union(s)
-
+    except ValueError:
+        print '* ' + str(i)
+        return get_union(series, i+1)
 
 def dissolver(group):
     agg = lambda a: reduce(lambda b,c: np.unique(np.append(b,c)), a)
@@ -76,14 +86,22 @@ def dissolver(group):
     return base
 
 def dissolve(groups):
-    return gpd.GeoDataFrame(map(dissolver, groups))
+    return gpd.GeoDataFrame(mc_map(dissolver, groups))
+
+class GetterOfIntersections(object):
+    def __init__(self, df, thresh):
+        self.df = df
+        self.thresh = thresh
+    def __call__(self, poly):
+        return get_intersections(self.df, poly, self.thresh)
 
 def cross_dissolver(df, thresh):
-    intersections = [get_intersections(df, get_poly(df, i), thresh)
-                     for i in range(df.shape[0])
+    # optmization to not double-up on first round
+    polys_to_intersect = [get_poly(df, i) for i in range(df.shape[0]) if has_prev(df, i)]
 
-                     # optmization to not double-up on first round
-                     if has_prev(df, i)]
+    # parallelize
+    fn = GetterOfIntersections(df, thresh)
+    intersections = mc_map(fn, polys_to_intersect)
 
     # If the only intersection is itself, we consider this stable
     stable = [i for i in intersections if i.shape[0] == 1]
@@ -107,10 +125,9 @@ def recursively_dissolve(to_merge, thresh, stable = None):
     else:
         return stable
 
-
-
 def format_for(df, fn):
     years = get_years(df)
+    print years
     new_df = gpd.GeoDataFrame({ 'geometry': df.geometry })
     return reduce(lambda d,y: d.assign(**{ y: df[y].map(fn) }), years, new_df)
 
@@ -121,7 +138,8 @@ def format_for_printing(df):
     return format_for(df, join_array)
 
 def make_array(s):
-    return np.array(map(int, s.split(',')))
+    els = [int(i) for i in s.split(',') if i]
+    return np.array(els)
 
 def format_for_working(df):
     return format_for(df, make_array)
@@ -165,7 +183,7 @@ parser.add_argument('--path', '-p')
 args = vars(parser.parse_args())
 
 districts = get_all_shapes(args['path'])
-districts = [d for d in districts if d.year.iloc[0] in ['2000', '2006']]
+# districts = [d for d in districts if d.year.iloc[0] in ['2000', '2006']]
 output = all_districts(districts, 0.05)
 format_for_printing(output).to_file('output')
 
@@ -176,6 +194,7 @@ format_for_printing(output).to_file('output')
 # districts = [d for d in districts if d.year.iloc[0] != '2000']
 # filtered = [filter_prov(d, 'limpopo') for d in districts]
 # format_for_printing(combining(filtered, 0.05)).to_file('limpopo')
+
 
 # ###############################################
 # Nationals
